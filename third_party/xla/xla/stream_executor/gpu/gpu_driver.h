@@ -57,80 +57,6 @@ namespace gpu {
 // Thread safety: these functions should not be used from signal handlers.
 class GpuDriver {
  public:
-  // Wraps a call to cuInit/hipInit with logging to help indicate what has gone
-  // wrong in the case of failure. Safe to call multiple times; will be fast on
-  // all calls after the first.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__INITIALIZE.html#group__CUDA__INITIALIZE_1g0a2f1517e1bd8502c7194c3a8c134bc3
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#initialization
-  static absl::Status Init();
-
-  // Destroys a CUDA/HIP stream associated with the given context.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g244c8833de4596bcd31a06cdf21ee758
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#stream-management
-  static void DestroyStream(Context* context, GpuStreamHandle stream);
-
-  // Allocates a unified memory space of size bytes associated with the given
-  // context via cuMemAllocManaged.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gb347ded34dc326af404aa02af5388a32
-  // (supported on CUDA only)
-  static void* UnifiedMemoryAllocate(Context* context, uint64_t bytes);
-
-  // Deallocates a unified memory space of size bytes associated with the given
-  // context via cuMemFree.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g89b3f154e17cc89b6eea277dbdf5c93a
-  // (supported on CUDA only)
-  static void UnifiedMemoryDeallocate(Context* context, void* location);
-
-  // Allocates page-locked and CUDA-registered memory on the host via
-  // cuMemAllocHost/hipHostMalloc.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gdd8311286d2c2691605362c689bc64e0
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#memory-management
-  static void* HostAllocate(Context* context, uint64_t bytes);
-
-  // Deallocates a location created by HostAllocate, via
-  // cuMemFreeHost/hipHostFree.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g62e0fdbe181dab6b1c90fa1a51c7b92c
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#memory-management
-  static void HostDeallocate(Context* context, void* location);
-
-  // Registers a memory region at location of size bytes via
-  // cuMemHostRegister/hipHostRegister.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gf0a9fe11544326dabd743b7aa6b54223
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#memory-management
-  static bool HostRegister(Context* context, void* location, uint64_t bytes);
-
-  // Unregisters a memory region that was previously registered at location via
-  // cuMemHostUnregister/hipHostUnregister.
-  //
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g63f450c8125359be87b7623b1c0b2a14
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#memory-management
-  //
-  // TODO(leary) verify an error will be returned if the location wasn't
-  // previously registered.
-  static bool HostUnregister(Context* context, void* location);
-
-  // Launches a CUDA/ROCm kernel via cuLaunchKernel/hipModuleLaunchKernel.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb8f3dc3031b40da29d5f9a7139e52e15
-  // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#execution-control
-  static absl::Status LaunchKernel(
-      Context* context, absl::string_view kernel_name,
-      GpuFunctionHandle function, unsigned int grid_dim_x,
-      unsigned int grid_dim_y, unsigned int grid_dim_z,
-      unsigned int block_dim_x, unsigned int block_dim_y,
-      unsigned int block_dim_z, unsigned int shared_mem_bytes,
-      GpuStreamHandle stream, void** kernel_params, void** extra);
-
-  // Launches a CUDA/ROCm kernel via cuLaunchKernelEx/hipModuleLaunchKernelEx.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb9c891eb6bb8f4089758e64c9c976db9
-  static absl::Status LaunchKernel(
-      Context* context, absl::string_view kernel_name,
-      GpuFunctionHandle function, unsigned int cluster_dim_x,
-      unsigned int cluster_dim_y, unsigned int cluster_dim_z,
-      unsigned int grid_dim_x, unsigned int grid_dim_y, unsigned int grid_dim_z,
-      unsigned int block_dim_x, unsigned int block_dim_y,
-      unsigned int block_dim_z, unsigned int shared_mem_bytes,
-      GpuStreamHandle stream, void** kernel_params, void** extra);
-
   // Creates a new GPU graph.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd885f719186010727b75c3315f865fdf
   // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#graph-management
@@ -356,28 +282,6 @@ class GpuDriver {
                                                   GpuGraphNodeHandle node,
                                                   GpuGraphHandle child);
 
-  // Performs a synchronous memset of the device memory segment via cuMemsetD8.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g6e582bf866e9e2fb014297bfaf354d7b
-  static absl::Status SynchronousMemsetUint8(Context* context,
-                                             GpuDevicePtr location,
-                                             uint8_t value, size_t size);
-
-  // Performs a synchronous memset of the device memory segment via cuMemsetD32.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g983e8d8759acd1b64326317481fbf132
-  static absl::Status SynchronousMemsetUint32(Context* context,
-                                              GpuDevicePtr location,
-                                              uint32_t value,
-                                              size_t uint32_count);
-
-  // -- Synchronous memcopies.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g4d32266788c440b0220b1a9ba5795169
-
-  static absl::Status SynchronousMemcpyD2H(Context* context, void* host_dst,
-                                           GpuDevicePtr gpu_src, uint64_t size);
-  static absl::Status SynchronousMemcpyH2D(Context* context,
-                                           GpuDevicePtr gpu_dst,
-                                           const void* host_src, uint64_t size);
-
   // The CUDA stream callback type signature.
   // The data passed to AddStreamCallback is subsequently passed to this
   // callback when it fires.
@@ -389,13 +293,6 @@ class GpuDriver {
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gab95a78143bae7f21eebb978f91e7f3f
   typedef void (*StreamCallback)(void* data);
 
-  // Enqueues a callback operation into stream.
-  // See StreamCallback above and the NVIDIA documentation for additional
-  // details.
-  static absl::Status AddStreamCallback(Context* context,
-                                        GpuStreamHandle stream,
-                                        StreamCallback callback, void* data);
-
   // Blocks the calling thread until the operations enqueued onto stream have
   // been completed, via cuStreamSynchronize.
   //
@@ -406,12 +303,6 @@ class GpuDriver {
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g15e49dd91ec15991eb7c0a741beb7dad
   static absl::Status SynchronizeStream(Context* context,
                                         GpuStreamHandle stream);
-
-  // -- Pointer-specific calls.
-
-  // Returns the base address and size of the device pointer dptr.
-  static absl::Status GetPointerAddressRange(GpuDevicePtr dptr,
-                                             GpuDevicePtr* base, size_t* size);
 
   // -- Context- and device-independent calls.
 
@@ -428,16 +319,6 @@ class GpuDriver {
   //
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__VERSION.html#group__CUDA__VERSION_1g8b7a10395392e049006e61bcdc8ebe71
   static absl::StatusOr<int32_t> GetDriverVersion();
-
-  // -- Other calls
-
-  // Returns the maximum number of blocks (per multiprocessor) occupied by the
-  // specified kernel/GpuFunctionHandle when launched with the specified
-  // parameters.
-  // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__OCCUPANCY.html#group__CUDA__OCCUPANCY_1gcc6e1094d05cba2cee17fe33ddd04a98
-  static absl::StatusOr<int> GetMaxOccupiedBlocksPerCore(
-      Context* context, GpuFunctionHandle kernel, int threads_per_block,
-      size_t dynamic_shared_memory_bytes);
 };
 
 }  // namespace gpu

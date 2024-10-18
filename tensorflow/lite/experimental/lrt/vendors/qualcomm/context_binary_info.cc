@@ -22,13 +22,13 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "third_party/qairt/include/QNN/QnnCommon.h"
-#include "third_party/qairt/include/QNN/QnnTypes.h"
-#include "third_party/qairt/include/QNN/System/QnnSystemContext.h"
+#include "third_party/qairt/latest/include/QNN/QnnCommon.h"
+#include "third_party/qairt/latest/include/QNN/QnnTypes.h"
+#include "third_party/qairt/latest/include/QNN/System/QnnSystemContext.h"
 #include "tensorflow/lite/experimental/lrt/vendors/qualcomm/qnn_manager.h"
 #include "tensorflow/lite/experimental/lrt/vendors/qualcomm/qnn_tensor.h"
 
-namespace lrt {
+namespace litert {
 namespace qnn {
 
 namespace {
@@ -171,4 +171,4 @@ absl::StatusOr<ContextBinaryInfo> ContextBinaryInfo::Create(
 }
 
 }  // namespace qnn
-}  // namespace lrt
+}  // namespace litert

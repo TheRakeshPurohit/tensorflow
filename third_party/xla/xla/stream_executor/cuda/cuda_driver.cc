@@ -57,34 +57,6 @@ limitations under the License.
 namespace stream_executor {
 namespace gpu {
 
-namespace {
-
-// Actually performs the work of CUDA initialization. Wrapped up in one-time
-// execution guard.
-static absl::Status InternalInit() {
-  absl::Status status =
-      cuda::ToStatus(cuInit(0 /* = flags */), "Failed call to cuInit");
-  if (status.ok()) {
-    return status;
-  }
-
-  LOG(ERROR) << "failed call to cuInit: " << status;
-
-  Diagnostician::LogDiagnosticInformation();
-  return status;
-}
-
-}  // namespace
-
-absl::Status GpuDriver::Init() {
-  // Cached return value from calling InternalInit(), as cuInit need only be
-  // called once, but GpuDriver::Init may be called many times.
-  static absl::Status* init_retval = [] {
-    return new absl::Status(InternalInit());
-  }();
-  return *init_retval;
-}
-
 absl::Status GpuDriver::CreateGraph(CUgraph* graph) {
   VLOG(2) << "Create new CUDA graph";
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuGraphCreate(graph, /*flags=*/0),
@@ -514,7 +486,7 @@ absl::Status GpuDriver::GraphAddMemcpyD2DNode(
 
 absl::Status GpuDriver::GraphExecMemcpyD2DNodeSetParams(
     Context* context, GpuGraphExecHandle exec, GpuGraphNodeHandle node,
-    GpuDevicePtr gpu_dst, GpuDevicePtr gpu_src, uint64_t size) {
+    CUdeviceptr gpu_dst, CUdeviceptr gpu_src, uint64_t size) {
   CudaContext* gpu_context = tensorflow::down_cast<CudaContext*>(context);
   VLOG(2) << "Set memcpy d2d node params " << node << " in graph executable "
           << exec << "; dst: " << reinterpret_cast<void*>(gpu_dst)
@@ -649,256 +621,6 @@ absl::Status GpuDriver::GraphAddChildNode(CUgraphNode* node, CUgraph graph,
                         "Failed to set CUDA graph child node params");
 }
 
-absl::Status GpuDriver::LaunchKernel(
-    Context* context, absl::string_view kernel_name, CUfunction function,
-    unsigned int grid_dim_x, unsigned int grid_dim_y, unsigned int grid_dim_z,
-    unsigned int block_dim_x, unsigned int block_dim_y,
-    unsigned int block_dim_z, unsigned int shared_mem_bytes, CUstream stream,
-    void** kernel_params, void** extra) {
-  ScopedActivateContext activation(context);
-  VLOG(2) << "launching kernel: " << kernel_name << "; gdx: " << grid_dim_x
-          << " gdy: " << grid_dim_y << " gdz: " << grid_dim_z
-          << " bdx: " << block_dim_x << " bdy: " << block_dim_y
-          << " bdz: " << block_dim_z
-          << "; shared_mem_bytes: " << shared_mem_bytes;
-
-  // TODO(ezhulenev): Why do we do it on every call to launch kernel? This
-  // should be moved one level up to se::Kernel level, and done just once (or
-  // updated once we get a new larger shared memory request).
-  if (shared_mem_bytes != 0) {
-    TF_RETURN_IF_ERROR(cuda::ToStatus(
-        cuFuncSetAttribute(function,
-                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                           shared_mem_bytes),
-        "Failed to set shared memory size"));
-  }
-
-  return cuda::ToStatus(
-      cuLaunchKernel(function, grid_dim_x, grid_dim_y, grid_dim_z, block_dim_x,
-                     block_dim_y, block_dim_z, shared_mem_bytes, stream,
-                     kernel_params, extra),
-      absl::StrCat("Failed to launch CUDA kernel: ", kernel_name,
-                   "; block dims: ", block_dim_x, "x", block_dim_y, "x",
-                   block_dim_z, "; grid dims: ", grid_dim_x, "x", grid_dim_y,
-                   "x", grid_dim_z,
-                   "; shared memory size: ", shared_mem_bytes));
-}
-
-absl::Status GpuDriver::LaunchKernel(
-    Context* context, absl::string_view kernel_name, GpuFunctionHandle function,
-    unsigned int cluster_dim_x, unsigned int cluster_dim_y,
-    unsigned int cluster_dim_z, unsigned int grid_dim_x,
-    unsigned int grid_dim_y, unsigned int grid_dim_z, unsigned int block_dim_x,
-    unsigned int block_dim_y, unsigned int block_dim_z,
-    unsigned int shared_mem_bytes, GpuStreamHandle stream, void** kernel_params,
-    void** extra) {
-  ScopedActivateContext activation(context);
-  VLOG(2) << "launching kernel: " << kernel_name << "; cdx: " << cluster_dim_x
-          << " cdy: " << cluster_dim_y << " cdz: " << cluster_dim_z
-          << " gdx: " << grid_dim_x << " gdy: " << grid_dim_y
-          << " gdz: " << grid_dim_z << " bdx: " << block_dim_x
-          << " bdy: " << block_dim_y << " bdz: " << block_dim_z
-          << "; shared_mem_bytes: " << shared_mem_bytes;
-
-  // TODO(ezhulenev): Why do we do it on every call to launch kernel? This
-  // should be moved one level up to se::Kernel level, and done just once (or
-  // updated once we get a new larger shared memory request).
-  if (shared_mem_bytes != 0) {
-    TF_RETURN_IF_ERROR(cuda::ToStatus(
-        cuFuncSetAttribute(function,
-                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                           shared_mem_bytes),
-        "Failed to set shared memory size"));
-  }
-
-  CUlaunchConfig launch_config;
-  memset(&launch_config, 0, sizeof(launch_config));
-  launch_config.blockDimX = block_dim_x;
-  launch_config.blockDimY = block_dim_y;
-  launch_config.blockDimZ = block_dim_z;
-  launch_config.gridDimX = grid_dim_x;
-  launch_config.gridDimY = grid_dim_y;
-  launch_config.gridDimZ = grid_dim_z;
-  launch_config.hStream = stream;
-  launch_config.sharedMemBytes = shared_mem_bytes;
-
-  CUlaunchAttribute cluster_dims;
-  memset(&cluster_dims, 0, sizeof(cluster_dims));
-  cluster_dims.id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-  cluster_dims.value.clusterDim.x = cluster_dim_x;
-  cluster_dims.value.clusterDim.y = cluster_dim_y;
-  cluster_dims.value.clusterDim.z = cluster_dim_z;
-
-  launch_config.attrs = &cluster_dims;
-  launch_config.numAttrs = 1;
-
-  return cuda::ToStatus(
-      cuLaunchKernelEx(&launch_config, function, kernel_params, extra),
-      absl::StrCat("Failed to launch CUDA kernel: ", kernel_name,
-                   "; cluster dims: ", cluster_dim_x, "x", cluster_dim_y, "x",
-                   cluster_dim_z, "; block dims: ", block_dim_x, "x",
-                   block_dim_y, "x", block_dim_z, "; grid dims: ", grid_dim_x,
-                   "x", grid_dim_y, "x", grid_dim_z,
-                   "; shared memory size: ", shared_mem_bytes));
-}
-
-absl::Status GpuDriver::SynchronousMemsetUint8(Context* context,
-                                               CUdeviceptr location,
-                                               uint8_t value, size_t size) {
-  ScopedActivateContext activation(context);
-  return cuda::ToStatus(cuMemsetD8(location, value, size),
-                        "Failed to memset memory");
-}
-
-absl::Status GpuDriver::SynchronousMemsetUint32(Context* context,
-                                                CUdeviceptr location,
-                                                uint32_t value,
-                                                size_t uint32_count) {
-  ScopedActivateContext activation(context);
-  return cuda::ToStatus(cuMemsetD32(location, value, uint32_count),
-                        "Failed to memset memory");
-}
-
-absl::Status GpuDriver::AddStreamCallback(Context* context, CUstream stream,
-                                          StreamCallback callback, void* data) {
-  // Note: flags param is required to be zero according to CUDA 6.0.
-  return cuda::ToStatus(cuLaunchHostFunc(stream, callback, data));
-}
-
-
-void GpuDriver::DestroyStream(Context* context, GpuStreamHandle stream) {
-  if (stream == nullptr) {
-    return;
-  }
-
-  ScopedActivateContext activated{context};
-  CUresult res = cuStreamQuery(stream);
-  if (res != CUDA_SUCCESS) {
-    LOG(ERROR) << "stream not idle on destroy: " << cuda::ToStatus(res);
-  }
-
-  auto status = cuda::ToStatus(cuStreamDestroy(stream));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to destroy CUDA stream for context " << context
-               << ": " << status;
-  } else {
-    VLOG(2) << "successfully destroyed stream " << stream << " for context "
-            << context;
-  }
-}
-
-void* GpuDriver::UnifiedMemoryAllocate(Context* context, uint64_t bytes) {
-  ScopedActivateContext activation(context);
-  CUdeviceptr result = 0;
-  // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
-  auto status =
-      cuda::ToStatus(cuMemAllocManaged(&result, bytes, CU_MEM_ATTACH_GLOBAL));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to alloc " << bytes
-               << " bytes unified memory; result: " << status;
-    return nullptr;
-  }
-  void* ptr = reinterpret_cast<void*>(result);
-  VLOG(2) << "allocated " << ptr << " for context " << context << " of "
-          << bytes << " bytes in unified memory";
-  return ptr;
-}
-
-void GpuDriver::UnifiedMemoryDeallocate(Context* context, void* location) {
-  ScopedActivateContext activation(context);
-  CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
-  auto status = cuda::ToStatus(cuMemFree(pointer));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to free unified memory at " << location
-               << "; result: " << status;
-  } else {
-    VLOG(2) << "deallocated unified memory at " << location << " for context "
-            << context;
-  }
-}
-
-void* GpuDriver::HostAllocate(Context* context, uint64_t bytes) {
-  ScopedActivateContext activation(context);
-  void* host_mem = nullptr;
-  // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
-  auto status = cuda::ToStatus(
-      cuMemHostAlloc(&host_mem, bytes, CU_MEMHOSTALLOC_PORTABLE));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to alloc " << bytes << " bytes on host: " << status;
-  }
-  return host_mem;
-}
-
-void GpuDriver::HostDeallocate(Context* context, void* location) {
-  ScopedActivateContext activation(context);
-  auto status = cuda::ToStatus(cuMemFreeHost(location));
-  if (!status.ok()) {
-    LOG(ERROR) << "error deallocating host memory at " << location << ": "
-               << status;
-  }
-}
-
-bool GpuDriver::HostRegister(Context* context, void* location, uint64_t bytes) {
-  ScopedActivateContext activation(context);
-  // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
-  auto status = cuda::ToStatus(
-      cuMemHostRegister(location, bytes, CU_MEMHOSTREGISTER_PORTABLE));
-  if (!status.ok()) {
-    LOG(ERROR) << "error registering host memory at " << location << ": "
-               << status;
-    return false;
-  }
-  return true;
-}
-
-bool GpuDriver::HostUnregister(Context* context, void* location) {
-  ScopedActivateContext activation(context);
-  auto status = cuda::ToStatus(cuMemHostUnregister(location));
-  if (!status.ok()) {
-    LOG(ERROR) << "error unregistering host memory at " << location << ": "
-               << status;
-    return false;
-  }
-  return true;
-}
-
-
-absl::Status GpuDriver::SynchronizeStream(Context* context, CUstream stream) {
-  ScopedActivateContext activated{context};
-  CHECK(stream != nullptr);
-  return cuda::ToStatus(cuStreamSynchronize(stream),
-                        "Could not synchronize CUDA stream");
-}
-
-absl::Status GpuDriver::SynchronousMemcpyD2H(Context* context, void* host_dst,
-                                             CUdeviceptr gpu_src,
-                                             uint64_t size) {
-  ScopedActivateContext activation(context);
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuMemcpyDtoH(host_dst, gpu_src, size),
-      absl::StrFormat("failed to synchronous memcpy from device to host "
-                      "host dst: %p; GPU src: %p; size: %u=0x%x",
-                      host_dst, absl::bit_cast<void*>(gpu_src), size, size)));
-  VLOG(2) << "successfully sync memcpy'd d2h of " << size << " bytes to "
-          << host_dst;
-  return absl::OkStatus();
-}
-
-absl::Status GpuDriver::SynchronousMemcpyH2D(Context* context,
-                                             CUdeviceptr gpu_dst,
-                                             const void* host_src,
-                                             uint64_t size) {
-  ScopedActivateContext activation(context);
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuMemcpyHtoD(gpu_dst, host_src, size),
-      absl::StrFormat(
-          "failed to synchronous memcpy from host to device: GPU dst: %p;"
-          " host src: %p; size: %u=0x%x",
-          absl::bit_cast<void*>(gpu_dst), host_src, size, size)));
-  VLOG(2) << "successfully enqueued sync memcpy h2d of " << size << " bytes";
-  return absl::OkStatus();
-}
-
 int GpuDriver::GetDeviceCount() {
   int device_count = 0;
   auto status = cuda::ToStatus(cuDeviceGetCount(&device_count));
@@ -910,31 +632,11 @@ int GpuDriver::GetDeviceCount() {
   return device_count;
 }
 
-absl::Status GpuDriver::GetPointerAddressRange(CUdeviceptr dptr,
-                                               CUdeviceptr* base,
-                                               size_t* size) {
-  return cuda::ToStatus(cuMemGetAddressRange(base, size, dptr));
-}
-
 absl::StatusOr<int32_t> GpuDriver::GetDriverVersion() {
   int32_t version;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuDriverGetVersion(&version),
                                     "Could not get driver version"));
   return version;
-}
-
-absl::StatusOr<int> GpuDriver::GetMaxOccupiedBlocksPerCore(
-    Context* context, CUfunction kernel, int threads_per_block,
-    size_t dynamic_shared_memory_bytes) {
-  ScopedActivateContext activation(context);
-
-  int max_blocks;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-          &max_blocks, kernel, threads_per_block, dynamic_shared_memory_bytes,
-          CU_OCCUPANCY_DISABLE_CACHING_OVERRIDE),
-      absl::StrFormat("Failed to calculate occupancy of kernel %p", kernel)));
-  return max_blocks;
 }
 
 absl::StatusOr<size_t> GpuDriver::GraphGetNodeCount(GpuGraphHandle graph) {

@@ -30,8 +30,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        # copybara:uncomment "//third_party/qairt:qnn_lib_headers",
-        "//tensorflow/lite/experimental/lrt/cc:lite_rt_tensor",
+        # copybara:uncomment "//third_party/qairt/latest:qnn_lib_headers",
+        "//tensorflow/lite/experimental/lrt/cc:litert_tensor",
         "//tensorflow/lite/experimental/lrt/core:api_internal",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
     ],
@@ -40,6 +40,7 @@ cc_library(
 cc_test(
     name = "qnn_tensor_test",
     srcs = ["qnn_tensor_test.cc"],
+    data = ["//tensorflow/lite/experimental/lrt/test:tflite_test_data"],
     tags = [
         # Don't build/test in OS until qnn is available.
         "nobuilder",
@@ -51,7 +52,7 @@ cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        # copybara:uncomment "//third_party/qairt:qnn_lib_headers",
+        # copybara:uncomment "//third_party/qairt/latest:qnn_lib_headers",
         "//tensorflow/lite/experimental/lrt/core:api_internal",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
         "//tensorflow/lite/experimental/lrt/test:common",
@@ -67,8 +68,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        # copybara:uncomment "//third_party/qairt:qnn_lib_headers",
-        "//tensorflow/lite/experimental/lrt/cc:lite_rt_op",
+        # copybara:uncomment "//third_party/qairt/latest:qnn_lib_headers",
+        "//tensorflow/lite/experimental/lrt/cc:litert_op",
         "//tensorflow/lite/experimental/lrt/core:api_internal",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
     ],
@@ -77,6 +78,7 @@ cc_library(
 cc_test(
     name = "qnn_op_test",
     srcs = ["qnn_op_test.cc"],
+    data = ["//tensorflow/lite/experimental/lrt/test:tflite_test_data"],
     tags = [
         # Don't build/test in OS until qnn is available.
         "nobuilder",
@@ -88,7 +90,7 @@ cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        # copybara:uncomment "//third_party/qairt:qnn_lib_headers",
+        # copybara:uncomment "//third_party/qairt/latest:qnn_lib_headers",
         "//tensorflow/lite/experimental/lrt/core:api_internal",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
         "//tensorflow/lite/experimental/lrt/test:common",
@@ -98,6 +100,7 @@ cc_test(
 cc_test(
     name = "op_compatibility_test",
     srcs = ["op_compatibility_test.cc"],
+    data = ["//tensorflow/lite/experimental/lrt/test:tflite_test_data"],
     tags = [
         # Don't build/test in OS until qnn is available.
         "nobuilder",
@@ -110,7 +113,7 @@ cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        # copybara:uncomment "//third_party/qairt:qnn_lib_headers",
+        # copybara:uncomment "//third_party/qairt/latest:qnn_lib_headers",
         "//tensorflow/lite/experimental/lrt/core:api_internal",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
         "//tensorflow/lite/experimental/lrt/test:common",

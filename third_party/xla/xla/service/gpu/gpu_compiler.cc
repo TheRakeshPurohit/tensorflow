@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/service/all_reduce_folder.h"
 #include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_reduce_reassociate.h"
+#include "xla/service/all_reduce_simplifier.h"
 #include "xla/service/async_collective_creator.h"
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
@@ -218,6 +219,7 @@ limitations under the License.
 #include "xla/service/result_caster.h"
 #include "xla/service/rng_bit_generator_expander.h"
 #include "xla/service/rng_expander.h"
+#include "xla/service/scatter_determinism_expander.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/service/sharding_remover.h"
@@ -699,6 +701,7 @@ absl::Status RunOptimizationPasses(
   if (RequireDeterminism(hlo_module->config())) {
     // Scatter can be indeterministic if indices are not unique or a non
     // associative combiner function is used. Eliminate these Scatter ops.
+    pipeline.AddPass<ScatterDeterminismExpander>();
     pipeline.AddPass<ScatterExpander>(
         ScatterExpander::kEliminateIndeterministicScatters);
   }
@@ -797,10 +800,19 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<DotDecomposer>();
     // Only merge "smallish" dots.  This threshold defaults to 32MB today, with
     // a flag to override.
+    // Do not merge dots when they are assigned different stream ids.
+    std::function<bool(const HloInstruction* dot_a,
+                       const HloInstruction* dot_b)>
+        can_merge = [&](const HloInstruction* dot_a,
+                        const HloInstruction* dot_b) -> bool {
+      return dot_a->backend_config<GpuBackendConfig>()->operation_queue_id() ==
+             dot_b->backend_config<GpuBackendConfig>()->operation_queue_id();
+    };
     pipeline.AddPass<DotMerger>(
-        /*max_size_to_merge=*/int64_t{
-            debug_options.xla_gpu_dot_merger_threshold_mb()}
-        << 20);
+        /*max_size_to_merge=*/int64_t{debug_options
+                                          .xla_gpu_dot_merger_threshold_mb()}
+            << 20,
+        can_merge);
     pipeline.AddPass<SortSimplifier>();
     pipeline.AddPass<TupleSimplifier>();
     pipeline.AddPass<WhileLoopConstantSinking>();
@@ -843,6 +855,7 @@ absl::Status RunCollectiveOptimizationPasses(
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   HloPassPipeline collectives_pipeline("collective-optimizations");
+  collectives_pipeline.AddPass<AllReduceSimplifier>();
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<AllReduceSplitter>();
   collectives_pipeline.AddPass<AllGatherOptimizer>();

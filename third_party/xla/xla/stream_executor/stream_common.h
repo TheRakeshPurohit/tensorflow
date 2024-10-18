@@ -65,7 +65,6 @@ class StreamCommon : public Stream {
   absl::StatusOr<Stream *> GetOrCreateSubStream() override
       TF_LOCKS_EXCLUDED(mu_);
   void ReturnSubStream(Stream *sub_stream) override TF_LOCKS_EXCLUDED(mu_);
-  absl::Status BlockHostUntilDone() override TF_LOCKS_EXCLUDED(mu_);
   StreamExecutor *parent() const override {
     CHECK(parent_ != nullptr);
     return parent_;
@@ -83,8 +82,8 @@ class StreamCommon : public Stream {
   }
 
   // Doesn't do anything interesting by default; GpuStream connects this to NVTX
-  absl::string_view name() const override { return name_; }
-  void set_name(absl::string_view name) override { name_ = name; }
+  const std::string &GetName() const override { return name_; }
+  void SetName(std::string name) override { name_ = std::move(name); }
 
  protected:
   bool InErrorState() const TF_LOCKS_EXCLUDED(mu_) {

@@ -83,7 +83,7 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   // No streams are reusable; create a new stream.
   TF_ASSIGN_OR_RETURN(auto stream, parent_->CreateStream());
   Stream *sub_stream = stream.get();
-  sub_stream->set_name(absl::StrFormat("Sub-stream of %s", name()));
+  sub_stream->SetName(absl::StrFormat("Sub-stream of %s", GetName()));
   sub_streams_.emplace_back(std::move(stream), false);
   VLOG(1) << "stream=" << this << " created new sub_stream=" << sub_stream;
 
@@ -133,22 +133,6 @@ void StreamCommon::CheckError(bool operation_retcode) {
   }
   absl::MutexLock lock(&mu_);
   status_ = absl::InternalError("Unknown error");
-}
-
-absl::Status StreamCommon::BlockHostUntilDone() {
-  if (!ok()) {
-    absl::MutexLock lock(&mu_);
-    LOG(INFO) << status_.ToString();
-    absl::Status status = absl::InternalError(
-        "stream did not block host until done; was already in an error state");
-    LOG(INFO) << "stream = " << this << " " << status;
-    return status;
-  }
-
-  absl::Status error = parent_->BlockHostUntilDone(this);
-  CheckError(error.ok());
-
-  return error;
 }
 
 void StreamCommon::CheckStatus(absl::Status status) {
