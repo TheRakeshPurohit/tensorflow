@@ -631,6 +631,8 @@ cuda_library(
         "command_buffer_kernels.cc",
         "command_buffer_kernels.cu.cc",
     ],
+    hdrs = ["command_buffer_kernels.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = ["cuda-only"],
     deps = [
         "//xla/stream_executor:kernel_spec",
@@ -1213,8 +1215,6 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_common",
-        "//xla/stream_executor/gpu:gpu_driver_header",
-        "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
@@ -1326,7 +1326,9 @@ cc_library(
         "gpu",
     ],
     deps = [
+        ":command_buffer_kernels",
         ":cuda_status",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "@com_google_absl//absl/log",

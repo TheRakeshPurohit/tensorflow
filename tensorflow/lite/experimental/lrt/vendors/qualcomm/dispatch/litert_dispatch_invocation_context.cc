@@ -40,16 +40,17 @@
 #include "tensorflow/lite/experimental/lrt/vendors/qualcomm/qnn_manager.h"
 
 using ::litert::qnn::QnnManager;
-using ::litert::qnn::config::GetDefaultContextConfigs;
 
 LiteRtDispatchInvocationContextT::LiteRtDispatchInvocationContextT(
     litert::qnn::QnnManager& qnn_manager,
     const litert::qnn::ContextBinaryInfo& context_binary_info,
     LiteRtDispatchDeviceContextT& device_context,
+    QnnManager::ContextHandle&& context_handle,
     Qnn_ProfileHandle_t profile_handle, int graph_index,
     Qnn_GraphHandle_t graph_handle)
     : qnn_manager_(qnn_manager),
       device_context_(device_context),
+      context_handle_(std::move(context_handle)),
       profile_handle_(profile_handle),
       graph_index_(graph_index),
       graph_handle_(graph_handle),
@@ -80,25 +81,27 @@ LiteRtDispatchInvocationContextT::Create(
     return absl::InternalError("Function name not found");
   }
 
+  auto configs = QnnManager::DefaultContextConfigs();
   Qnn_ProfileHandle_t profile_handle = nullptr;
-  if (auto status = qnn.Api()->contextCreateFromBinary(
-          qnn.BackendHandle(), /*deviceHandle*/ nullptr,
-          GetDefaultContextConfigs().data(), exec_bytecode_ptr,
-          exec_bytecode_size, &qnn.ContextHandle(), profile_handle);
-      status != QNN_SUCCESS) {
-    return absl::InternalError("Failed to create context from context binary");
+  auto context_handle = qnn.CreateContextHandle(
+      configs,
+      absl::MakeSpan(static_cast<const uint8_t*>(exec_bytecode_ptr),
+                     exec_bytecode_size),
+      profile_handle);
+  if (!context_handle.ok()) {
+    return context_handle.status();
   }
 
   Qnn_GraphHandle_t graph_handle;
-  if (auto status = qnn.Api()->graphRetrieve(qnn.ContextHandle(), function_name,
-                                             &graph_handle);
+  if (auto status = qnn.Api()->graphRetrieve(context_handle->get(),
+                                             function_name, &graph_handle);
       status != QNN_SUCCESS) {
     return absl::InternalError("Failed to retrieve graph");
   }
 
   return Ptr(new LiteRtDispatchInvocationContextT(
-      qnn, std::move(*context_binary_info), device_context, profile_handle,
-      graph_index, graph_handle));
+      qnn, std::move(*context_binary_info), device_context,
+      std::move(*context_handle), profile_handle, graph_index, graph_handle));
 }
 
 namespace {
@@ -110,12 +113,11 @@ absl::StatusOr<LiteRtTensorBufferRequirements> GetTensorBufferRequirements(
     return absl::InternalError("Tensor strides are not supported by QNN");
   }
 
-  static constexpr LiteRtTensorBufferType supported_tensor_buffer_types[] = {
-      kLiteRtTensorBufferTypeFastRpc,
-  };
-  int num_supported_tensor_buffer_types =
-      sizeof(supported_tensor_buffer_types) /
-      sizeof(supported_tensor_buffer_types[0]);
+  static constexpr std::array<const LiteRtTensorBufferType, 2>
+      kSupportedTensorBufferTypes = {
+          kLiteRtTensorBufferTypeFastRpc,
+          kLiteRtTensorBufferTypeDmaBuf,
+      };
 
   auto buffer_size = litert::internal::GetNumPackedBytes(tensor_type);
   if (!buffer_size.ok()) {
@@ -124,8 +126,8 @@ absl::StatusOr<LiteRtTensorBufferRequirements> GetTensorBufferRequirements(
 
   LiteRtTensorBufferRequirements requirements;
   if (auto status = LiteRtCreateTensorBufferRequirements(
-          num_supported_tensor_buffer_types, supported_tensor_buffer_types,
-          *buffer_size, &requirements);
+          kSupportedTensorBufferTypes.size(),
+          kSupportedTensorBufferTypes.data(), *buffer_size, &requirements);
       status != kLiteRtStatusOk) {
     return absl::InternalError("Not implemented");
   }
