@@ -1444,6 +1444,7 @@ cc_library(
     name = "compiler",
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
+    visibility = internal_visibility(["//xla/internal:hwi_internal"]),
     deps = [
         ":buffer_assignment",
         ":buffer_value",
@@ -2028,6 +2029,7 @@ cc_library(
     srcs = ["gather_expander.cc"],
     hdrs = ["gather_expander.h"],
     deps = [
+        ":gather_scatter_utils",
         ":hlo_creation_utils",
         ":while_util",
         "//xla:literal_util",
@@ -2079,15 +2081,17 @@ cc_library(
     srcs = ["scatter_expander.cc"],
     hdrs = ["scatter_expander.h"],
     deps = [
-        ":call_inliner",
+        ":gather_scatter_utils",
         ":hlo_creation_utils",
         ":scatter_utils",
         ":while_util",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms:op_expander_pass",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -2124,6 +2128,7 @@ xla_cc_test(
         "//xla:test",
         "//xla:types",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
@@ -4090,13 +4095,18 @@ cc_library(
     srcs = ["hlo_domain_map.cc"],
     hdrs = ["hlo_domain_map.h"],
     deps = [
-        "//xla:types",
+        "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@local_tsl//tsl/platform:status",
+        "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -4971,8 +4981,15 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -4981,11 +4998,13 @@ xla_cc_test(
     srcs = ["while_loop_constant_sinking_test.cc"],
     deps = [
         ":while_loop_constant_sinking",
+        "//xla:literal_util",
         "//xla:test",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/lib/core:status_test_util",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -5785,9 +5804,12 @@ cc_library(
     hdrs = ["gather_scatter_utils.h"],
     deps = [
         ":hlo_creation_utils",
+        "//xla:literal_util",
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
     ],
 )
