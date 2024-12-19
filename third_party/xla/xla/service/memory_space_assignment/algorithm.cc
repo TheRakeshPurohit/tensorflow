@@ -29,7 +29,6 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -3175,7 +3174,7 @@ std::string AsynchronousCopyResource::Dump(
   std::vector<size_t> col_sizes;
   std::vector<std::vector<std::string>> rows;
   rows.push_back({"time", "initial", "delay", "avail", "overlapping copies"});
-  for (std::string_view col : rows.front()) {
+  for (absl::string_view col : rows.front()) {
     col_sizes.push_back(col.size());
   }
   for (int i = 0; i < time_dump_data.size(); ++i) {
@@ -3299,15 +3298,10 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
   }
 
   int64_t end_of_program_prefetch_end_time = instruction_schedule.size();
-  int64_t end_of_program_prefetch_latest_start_time =
-      options_.prefetch_interval_picker->LatestPrefetchStartTime(
-          buffer->defining_position().shape(), last_use_time,
-          end_of_program_prefetch_end_time, nullptr);
   int64_t end_of_program_inclusive_prefetch_start_time =
       options_.prefetch_interval_picker->PreferredPrefetchStartTime(
           buffer->defining_position().shape(), last_use_time,
-          end_of_program_prefetch_latest_start_time,
-          end_of_program_prefetch_end_time);
+          end_of_program_prefetch_end_time, end_of_program_prefetch_end_time);
   VLOG(2) << "last use time = " << last_use_time
           << ", end-of-program inclusive prefetch start time = "
           << end_of_program_inclusive_prefetch_start_time;
