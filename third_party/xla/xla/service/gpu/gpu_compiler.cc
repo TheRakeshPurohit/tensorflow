@@ -1043,19 +1043,6 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
                          .Run(hlo_module)
                          .status());
 
-  if (hlo_module->config().debug_options().xla_gpu_collect_cost_model_stats()) {
-    GpuHloCostAnalysis::Options cost_analysis_options{
-        shape_size_fn,
-        /*per_second_rates=*/{},
-        /*min_latencies_seconds=*/{},
-        /*count_multiple_input_accesses=*/true};
-
-    HloPassPipeline post_fusion_analysis("post_fusion_analysis");
-    post_fusion_analysis.AddPass<GpuCostModelStatsCollection>(
-        gpu_device_info, cost_analysis_options);
-    TF_RETURN_IF_ERROR(post_fusion_analysis.Run(hlo_module).status());
-  }
-
   TF_RETURN_IF_ERROR(
       HorizontalFusionPipeline(gpu_device_info).Run(hlo_module).status());
 
@@ -1597,9 +1584,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     if ((cuda_cc != nullptr &&
          cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) ||
         rocm_cc != nullptr) {
-      // Triton compilation needs normalized operations on bf16 (i.e. converted
-      // to f32).
-      add_float_normalization(pipeline);
       pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
                                                            gpu_version);
       pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
@@ -2567,6 +2551,15 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
     const se::DeviceDescription& gpu_device_info) {
   HloPassPipeline pipeline("pre-scheduling-passes");
   pipeline.AddPass<FusionWrapper>(gpu_device_info);
+  if (module->config().debug_options().xla_gpu_collect_cost_model_stats()) {
+    GpuHloCostAnalysis::Options cost_analysis_options{
+        ShapeSizeBytesFunction(),
+        /*per_second_rates=*/{},
+        /*min_latencies_seconds=*/{},
+        /*count_multiple_input_accesses=*/true};
+    pipeline.AddPass<GpuCostModelStatsCollection>(gpu_device_info,
+                                                  cost_analysis_options);
+  }
   return pipeline.Run(module).status();
 }
 

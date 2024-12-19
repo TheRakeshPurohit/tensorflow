@@ -26,7 +26,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -67,6 +66,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/cpu_instruction_fusion.h"
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/cpu/dot_op_emitter.h"
@@ -224,7 +224,13 @@ absl::StatusOr<llvm::Function*> IrEmitter::EmitComputation(
   std::string function_name = name_uniquer_.GetUniqueName(function_name_prefix);
   VLOG(2) << "Emitting IR for CPU function [" << function_name_prefix << "]";
   is_top_level_computation_ = is_top_level_computation;
+
+  auto cleanup = absl::MakeCleanup(
+      [saved_allow_reassociation = allow_reassociation_, this]() {
+        allow_reassociation_ = saved_allow_reassociation;
+      });
   allow_reassociation_ = allow_reassociation;
+
   num_dynamic_loop_bounds_ = 0;
   auto backend_config_or =
       computation->root_instruction()->backend_config<BackendConfig>();
@@ -330,9 +336,24 @@ llvm::Constant* IrEmitter::EmitGlobalForLiteral(const Literal& literal) {
   return result_global;
 }
 
-absl::Status IrEmitter::EmitConstantGlobals() {
+absl::Status IrEmitter::EmitSmallConstantGlobals() {
+  return EmitConstantGlobals(/*max_size_bytes=*/CpuInstructionFusion::
+                                 GetLargeConstantThresholdBytes());
+}
+
+absl::Status IrEmitter::EmitAllConstantGlobals() {
+  return EmitConstantGlobals(/*max_size_bytes=*/std::nullopt);
+}
+
+absl::Status IrEmitter::EmitConstantGlobals(
+    std::optional<size_t> max_size_bytes) {
   for (const BufferAllocation& allocation : assignment_.Allocations()) {
-    if (!allocation.is_constant()) {
+    // Large constants don't get fused with other instructions, so we don't
+    // need to emit them as globals.
+    if (!allocation.is_constant() ||
+        (max_size_bytes &&
+         llvm_ir::LiteralForConstantAllocation(allocation).size_bytes() >
+             *max_size_bytes)) {
       continue;
     }
 
@@ -3169,7 +3190,7 @@ struct EncodedInfo {
 };
 
 template <typename Args>
-static EncodedInfo StoreEncodedTypes(std::string_view alloca_name,
+static EncodedInfo StoreEncodedTypes(absl::string_view alloca_name,
                                      const Args& args,
                                      llvm::IRBuilderBase& ir) {
   // Store the types of `args` into the allocated memory. These types are stored
@@ -3198,7 +3219,7 @@ static EncodedInfo StoreEncodedTypes(std::string_view alloca_name,
 };
 
 template <typename Args>
-static EncodedInfo StoreEncodedShapes(std::string_view alloca_name,
+static EncodedInfo StoreEncodedShapes(absl::string_view alloca_name,
                                       const Args& args,
                                       llvm::IRBuilderBase& ir) {
   // Prepare metadata for all buffers. A tuple shape is flattened to only encode
