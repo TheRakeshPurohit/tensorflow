@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
@@ -414,6 +416,7 @@ TEST_F(FunctionalHloRunnerTest, ShardedAutotuningWorks) {
     GTEST_SKIP() << "GPU-only test.";
   }
 
+  tsl::setenv("TF_CPP_VMODULE", "gemm_fusion_autotuner=2", /*overwrite=*/true);
   tsl::SubProcess child[kNumNodes];
   for (int node_id = 0; node_id < kNumNodes; ++node_id) {
     std::vector<std::string> argv;
@@ -469,13 +472,13 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
     TF_ASSIGN_OR_RETURN(
         std::string results0,
         env.kv_store->Get("gemm_fusion_autotuning_results_"
-                          "3rICV5olU4JYmrEsiWSstWM0ew6jr1f60ikmjvPhwUc_0",
+                          "iuhMRX2JY-YpaUJD3Pw0h3H3HNGWEzN4xA0s9Q3CoK8_0",
                           absl::Seconds(1)));
     CHECK(absl::StrContains(results0, "run_time"));
     TF_ASSIGN_OR_RETURN(
         std::string results1,
         env.kv_store->Get("gemm_fusion_autotuning_results_"
-                          "3rICV5olU4JYmrEsiWSstWM0ew6jr1f60ikmjvPhwUc_1",
+                          "iuhMRX2JY-YpaUJD3Pw0h3H3HNGWEzN4xA0s9Q3CoK8_1",
                           absl::Seconds(1)));
     CHECK(absl::StrContains(results1, "run_time"));
     // The nodes autotune different fusions.
@@ -630,6 +633,23 @@ TEST_F(FunctionalHloRunnerTest, ReadHloUnoptimizedSnapshot) {
 
   CHECK_EQ(hlo_module_and_arguments_from_text.arguments.size(),
            hlo_module_and_arguments_from_binary.arguments.size());
+}
+
+TEST_F(FunctionalHloRunnerTest, FixFakeArguments) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  // Options corresponding to --num_replicas=1 --num_partitions=1
+  xla::DebugOptions debug_options;
+  FunctionalHloRunner::PreprocessingOptions preproc_options;
+  CompileOptions compile_options;
+  FunctionalHloRunner::RunningOptions running_options;
+
+  std::minstd_rand0 engine(42);
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRun(
+      *client, debug_options, preproc_options, compile_options, running_options,
+      {GetHloPath("single_device.hlo")}, InputFormat::kText,
+      /*arguments=*/{}, /*engine=*/&engine));
 }
 
 }  // namespace

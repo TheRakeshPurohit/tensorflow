@@ -57,7 +57,6 @@ cc_library(
         "common.h",
     ],
     deps = [
-        ":test_macros",
         "//tensorflow/lite:framework",
         "//tensorflow/lite/c:c_api_opaque",
         "//tensorflow/lite/c:common",
@@ -123,12 +122,6 @@ cc_library(
 )
 
 cc_library(
-    name = "test_macros",
-    hdrs = ["test_macros.h"],
-    deps = ["//tensorflow/lite/experimental/litert/c:litert_common"],
-)
-
-cc_library(
     name = "matchers",
     testonly = True,
     hdrs = ["matchers.h"],
@@ -148,5 +141,19 @@ cc_test(
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/cc:litert_expected",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Use this library if you want to enforce an OSS environment for your test.
+cc_library(
+    name = "matchers_oss",
+    testonly = True,
+    hdrs = ["matchers.h"],
+    tags = ["avoid_dep"],
+    deps = [
+        "//tensorflow/lite/experimental/litert/c:litert_common",
+        "//tensorflow/lite/experimental/litert/cc:litert_expected",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
     ],
 )

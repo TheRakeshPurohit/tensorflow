@@ -25,14 +25,17 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
@@ -51,6 +54,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/gpu/gpu_topology.h"
+#include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -72,6 +76,7 @@ limitations under the License.
 #include "xla/tsl/platform/subprocess.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
@@ -944,8 +949,9 @@ TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
       auto transfer_manager,
       client->CreateBuffersForAsyncHostToDevice({src_literal.shape()}, d0));
   auto src_buffer = transfer_manager->RetrieveBuffer(0);
-  // CopyToDevice won't be enqueued until src_buffer is available.
-  auto local_recv_buffer = *src_buffer->CopyToDevice(d1);
+  // CopyToMemorySpace won't be enqueued until src_buffer is available.
+  auto local_recv_buffer =
+      *src_buffer->CopyToMemorySpace(*d1->default_memory_space());
 
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, []() {}));
@@ -1869,8 +1875,21 @@ TEST(StreamExecutorGpuClientTest, AutoLayoutIsSupported) {
   EXPECT_NE(layouts[1]->ToString(), "{2,1,0}");
 }
 
+struct ShardedAutotuningTestInfo {
+  bool use_xla_computation;
+  int num_active_nodes;
+  int num_nodes_using_cache;
+
+  static std::string Name(
+      const ::testing::TestParamInfo<ShardedAutotuningTestInfo>& info) {
+    return absl::StrFormat(
+        "computation_%d_active_%d_cache_%d", info.param.use_xla_computation,
+        info.param.num_active_nodes, info.param.num_nodes_using_cache);
+  }
+};
+
 class ShardedAutotuningTest
-    : public ::testing::TestWithParam<std::tuple<bool, int>> {
+    : public ::testing::TestWithParam<ShardedAutotuningTestInfo> {
  public:
   static constexpr int kNumNodes = 2;
 };
@@ -1878,51 +1897,66 @@ class ShardedAutotuningTest
 static const char* test_binary_name;
 
 TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
-  bool use_xla_computation;
-  int num_active_nodes;
-  std::tie(use_xla_computation, num_active_nodes) = GetParam();
+  ShardedAutotuningTestInfo param = GetParam();
+
+  std::string cache_dir;
+  CHECK(tsl::Env::Default()->LocalTempFilename(&cache_dir));
 
   tsl::setenv("TF_CPP_VMODULE", "gemm_fusion_autotuner=1", /*overwrite=*/true);
-  tsl::SubProcess child[kNumNodes];
-  for (int node_id = 0; node_id < kNumNodes; ++node_id) {
-    std::vector<std::string> argv;
-    argv.reserve(4);
-    argv.push_back(test_binary_name);
-    argv.push_back(absl::StrFormat("--node_id=%d", node_id));
-    argv.push_back(
-        absl::StrFormat("--use_xla_computation=%d", use_xla_computation));
-    argv.push_back(absl::StrFormat("--num_active_nodes=%d", num_active_nodes));
-    child[node_id].SetProgram(test_binary_name, argv);
-    child[node_id].SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
-    child[node_id].SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
-    ASSERT_TRUE(child[node_id].Start()) << "node " << node_id;
-  }
-  for (int node_id = 0; node_id < kNumNodes; ++node_id) {
-    std::string stdout_str;
-    std::string stderr_str;
-    int child_status =
-        child[node_id].Communicate(nullptr, &stdout_str, &stderr_str);
-    if (WIFEXITED(child_status) &&
-        WEXITSTATUS(child_status) ==
-            static_cast<int>(absl::StatusCode::kFailedPrecondition)) {
-      GTEST_SKIP() << "Requires Ampere+ GPU.";
+
+  // Compile twice to test both empty and non-empty disk cache.
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    tsl::SubProcess child[kNumNodes];
+    for (int node_id = 0; node_id < kNumNodes; ++node_id) {
+      std::vector<std::string> argv;
+      argv.reserve(6);
+      argv.push_back(test_binary_name);
+      argv.push_back(absl::StrFormat("--node_id=%d", node_id));
+      argv.push_back(absl::StrFormat("--use_xla_computation=%d",
+                                     param.use_xla_computation));
+      argv.push_back(
+          absl::StrFormat("--num_active_nodes=%d", param.num_active_nodes));
+      argv.push_back(absl::StrFormat("--num_nodes_using_cache=%d",
+                                     param.num_nodes_using_cache));
+      argv.push_back(absl::StrFormat("--cache_dir=%s", cache_dir));
+      child[node_id].SetProgram(test_binary_name, argv);
+      child[node_id].SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+      child[node_id].SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+      ASSERT_TRUE(child[node_id].Start()) << "node " << node_id;
     }
-    EXPECT_EQ(child_status, 0) << " node " << node_id << "\nstdout:\n"
-                               << stdout_str << "\nstderr:\n"
-                               << stderr_str;
-    if (node_id < num_active_nodes) {
-      EXPECT_THAT(stderr_str,
-                  HasSubstr(absl::StrFormat(
-                      "Shard %d / %d: autotuning %d / 1 fusions", node_id + 1,
-                      num_active_nodes, (node_id == 0) ? 1 : 0)));
-    } else {
-      EXPECT_THAT(stderr_str, Not(HasSubstr("autotuning")));
+    for (int node_id = 0; node_id < kNumNodes; ++node_id) {
+      std::string stdout_str;
+      std::string stderr_str;
+      int child_status =
+          child[node_id].Communicate(nullptr, &stdout_str, &stderr_str);
+      if (WIFEXITED(child_status) &&
+          WEXITSTATUS(child_status) ==
+              static_cast<int>(absl::StatusCode::kFailedPrecondition)) {
+        GTEST_SKIP() << "Requires Ampere+ GPU.";
+      }
+      EXPECT_EQ(child_status, 0) << " node " << node_id << "\nstdout:\n"
+                                 << stdout_str << "\nstderr:\n"
+                                 << stderr_str;
+      if (node_id < param.num_active_nodes) {
+        int num_fusions_to_autotune = (node_id == 0) ? 1 : 0;
+        if (iteration > 0 && node_id < param.num_nodes_using_cache) {
+          num_fusions_to_autotune = 0;
+        }
+        EXPECT_THAT(stderr_str,
+                    HasSubstr(absl::StrFormat(
+                        "Rank %d / %d: autotuning %d / 1 fusions", node_id,
+                        param.num_active_nodes, num_fusions_to_autotune)));
+      } else {
+        EXPECT_THAT(stderr_str, Not(HasSubstr("autotuning")));
+      }
     }
   }
 }
 
 absl::Status ShardedAutotuningWorksTestBody(const int node_id,
                                             const int num_active_nodes,
+                                            const int num_nodes_using_cache,
+                                            absl::string_view cache_dir,
                                             bool use_xla_computation) {
   std::unique_ptr<xla::DistributedRuntimeService> service;
   if (node_id == 0) {
@@ -1966,22 +2000,27 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
 
   CompileOptions compile_options;
   compile_options.executable_build_options.set_num_replicas(num_active_nodes);
-  DebugOptions* debug_options =
-      compile_options.executable_build_options.mutable_debug_options();
-  debug_options->set_xla_gpu_shard_autotuning(true);
-  debug_options->set_xla_gpu_triton_gemm_any(true);
-  debug_options->set_xla_gpu_cublas_fallback(false);
+  DebugOptions& debug_options =
+      *compile_options.executable_build_options.mutable_debug_options();
+  debug_options.set_xla_gpu_shard_autotuning(true);
+  debug_options.set_xla_gpu_triton_gemm_any(true);
+  debug_options.set_xla_gpu_cublas_fallback(false);
+
+  if (node_id < num_nodes_using_cache) {
+    debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(
+        std::string(cache_dir));
+  }
 
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(R"mlir(
-      func.func public @main(%arg0: tensor<2x2048x2048xf32>) ->
-      (tensor<2x2048x2048xf32> {jax.result_info = ""}) {
+      func.func public @main(%arg0: tensor<2x32x32xf16>) ->
+      (tensor<2x32x32xf16> {jax.result_info = ""}) {
         %0 = stablehlo.dot_general %arg0, %arg0, batching_dims = [0] x [0],
         contracting_dims = [2] x [1]
-          : (tensor<2x2048x2048xf32>, tensor<2x2048x2048xf32>) ->
-          tensor<2x2048x2048xf32>
-        return %0 : tensor<2x2048x2048xf32>
+          : (tensor<2x32x32xf16>, tensor<2x32x32xf16>) ->
+          tensor<2x32x32xf16>
+        return %0 : tensor<2x32x32xf16>
       })mlir",
                                             context));
   std::unique_ptr<PjRtLoadedExecutable> executable;
@@ -2007,10 +2046,12 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
 
 INSTANTIATE_TEST_SUITE_P(
     ShardedAutotuningTest, ShardedAutotuningTest,
-    ::testing::Combine(::testing::Bool(),
-                       ::testing::Range(1,
-                                        ShardedAutotuningTest::kNumNodes + 1)));
-
+    ::testing::ValuesIn(std::vector<ShardedAutotuningTestInfo>{{true, 2, 0},
+                                                               {false, 2, 0},
+                                                               {false, 1, 0},
+                                                               {false, 2, 1},
+                                                               {false, 2, 2}}),
+    ShardedAutotuningTestInfo::Name);
 }  // namespace
 }  // namespace xla
 
@@ -2019,11 +2060,17 @@ int main(int argc, char* argv[]) {
   xla::test_binary_name = argv[0];
   int node_id = -1;
   int num_active_nodes = -1;
+  int num_nodes_using_cache = -1;
+  std::string cache_dir;
   bool use_xla_computation = false;
   std::vector<tsl::Flag> flag_list = {
       tsl::Flag("node_id", &node_id,
                 "Node ID for ShardedAutotuningWorks test."),
       tsl::Flag("num_active_nodes", &num_active_nodes,
+                "Test parameter for ShardedAutotuningWorks."),
+      tsl::Flag("num_nodes_using_cache", &num_nodes_using_cache,
+                "Test parameter for ShardedAutotuningWorks."),
+      tsl::Flag("cache_dir", &cache_dir,
                 "Test parameter for ShardedAutotuningWorks."),
       tsl::Flag("use_xla_computation", &use_xla_computation,
                 "Test parameter for ShardedAutotuningWorks."),
@@ -2033,9 +2080,13 @@ int main(int argc, char* argv[]) {
   tsl::Flags::Parse(&argc, argv, flag_list);
   testing::InitGoogleTest(&argc, argv);
   if (node_id >= 0) {
-    return xla::ShardedAutotuningWorksTestBody(node_id, num_active_nodes,
-                                               use_xla_computation)
-        .raw_code();
+    absl::Status result = xla::ShardedAutotuningWorksTestBody(
+        node_id, num_active_nodes, num_nodes_using_cache, cache_dir,
+        use_xla_computation);
+    if (!result.ok()) {
+      LOG(ERROR) << result.ToString();
+    }
+    return result.raw_code();
   }
   return RUN_ALL_TESTS();
 }

@@ -200,6 +200,7 @@ cc_library(
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/emitters/ir:xla",
+        "//xla/codegen/emitters/transforms:passes",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_function_importer",
@@ -477,7 +478,6 @@ cc_library(
         "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-        "@triton//:TritonAnalysis",
         "@triton//:TritonDialects",
         "@triton//:TritonGPUToLLVM",
         "@triton//:TritonGPUTransforms",
@@ -612,6 +612,7 @@ xla_test(
 
 xla_test(
     name = "fusion_emitter_device_legacy_test",
+    size = "large",
     srcs = if_gpu_is_configured(["fusion_emitter_device_legacy_test.cc"]),
     # TODO(b/372714955): Fix the memory leak!
     backend_args = if_google(
@@ -629,6 +630,7 @@ xla_test(
     ],
     shard_count = 20,
     tags = [
+        "large",
         "no_mac",
     ],
     deps = [
@@ -665,6 +667,7 @@ xla_test(
 
 xla_test(
     name = "fusion_emitter_int4_device_test",
+    size = "large",
     srcs = if_gpu_is_configured(["fusion_emitter_int4_device_test.cc"]),
     # TODO(b/372714955): Fix the memory leak!
     backend_args = if_google(
@@ -681,6 +684,7 @@ xla_test(
         "gpu_amd_any",
     ],
     tags = [
+        "large",
         "no_mac",
     ],
     deps = [
@@ -899,6 +903,7 @@ xla_cc_test(
 
 xla_test(
     name = "fusion_emitter_large_test",
+    size = "large",
     srcs = if_gpu_is_configured(["fusion_emitter_large_test.cc"]),
     backends = [
         "gpu_a100",
