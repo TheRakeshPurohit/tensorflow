@@ -110,6 +110,13 @@ void AddStrictQDQQuantizationPasses(
 
   // So that quantized clipping activations get fused into preceding ops.
   AddOptimizationPasses(converter_flags, pass_config, &pass_manager);
+
+  // TODO(b/399468842): This is a temporary fix to enable constant folding on
+  // quantized TFL_TransposeOp and TFL_ReshapeOp. Ideally TFL constant folders
+  // should handle quantized types (or anything that is supported by TFLite
+  // runtime).
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::TFL::CreatePostQuantizePass(true));
 }
 
 void AddQuantizationPasses(const mlir::TFL::PassConfig& pass_config,
@@ -293,11 +300,10 @@ void AddPreQuantizationStableHloToTfPasses(
   pass_manager.addPass(mlir::TF::CreateStripNoinlineAttributePass());
   // Add inline pass.
   pass_manager.addPass(mlir::createInlinerPass());
-  pass_manager.addPass(
-      mlir::stablehlo_ext::createStablehloFlattenEntryFunctionTuplesPass(
-          {entry_function_name.str()}));
+  // Flatten tuples in entry computations and custom calls.
   pass_manager.addNestedPass<mlir::func::FuncOp>(
-      mlir::stablehlo_ext::createStablehloFlattenTuplePass());
+      mlir::stablehlo_ext::createStablehloCanonicalizeFromHloImportPass(
+          {entry_function_name.str()}));
   mlir::odml::AddMhloOptimizationPasses(
       pass_manager,
       /*add_fold_broadcast_pass=*/pass_config.enable_stablehlo_quantizer);
