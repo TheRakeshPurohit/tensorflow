@@ -751,6 +751,11 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
   // }
   // c = acc
   VLOG(2) << "EmitDot: " << tiled_hlo_dot.ToString();
+  const HloDotInstruction& dot =
+      *::xla::Cast<HloDotInstruction>(tiled_hlo_dot.hlo());
+  if (dot.sparse_operands() > 0) {
+    return absl::UnimplementedError("Sparse configuration is not supported");
+  }
   if (!absl::c_all_of(tiled_hlo_dot.operands(),
                       [](const TiledHloInstruction* operand) {
                         return operand->hlo()->opcode() == HloOpcode::kFusion;
@@ -759,8 +764,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
   }
 
   // Iteration arguments only contain the accumulator.
-  TF_ASSIGN_OR_RETURN(
-      Type ty, TritonType(b, tiled_hlo_dot.hlo()->shape().element_type()));
+  TF_ASSIGN_OR_RETURN(Type ty, TritonType(b, dot.shape().element_type()));
   SmallVector<Value> iter_args = {
       CreateConst(b, ty, 0.0f, tiled_hlo_dot.tile_sizes()).UnwrapUnsafe()};
 
@@ -803,7 +807,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
     QCHECK_EQ(dot_args.size(), 2);
     QCHECK_EQ(iter_args.size(), 1);
     Value acc = for_op.getRegionIterArgs().front();
-    auto precision_config = tiled_hlo_dot.hlo()->precision_config();
+    const PrecisionConfig& precision_config = dot.precision_config();
     // TODO(b/393299275): Support precision config. Right now we bail out if
     // user wants anything but the default.
     if (precision_config.algorithm() != PrecisionConfig::ALG_UNSET ||
@@ -816,13 +820,11 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
                        precision_config.ShortDebugString()));
     }
 
-    auto lhs_contracting_dim_idx =
-        tiled_hlo_dot.hlo()->dot_dimension_numbers().lhs_contracting_dimensions(
-            0);
+    int64_t lhs_contracting_dim_idx =
+        dot.dot_dimension_numbers().lhs_contracting_dimensions(0);
 
-    auto rhs_contracting_dim_idx =
-        tiled_hlo_dot.hlo()->dot_dimension_numbers().rhs_contracting_dimensions(
-            0);
+    int64_t rhs_contracting_dim_idx =
+        dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
 
     // TODO(b/393299275): masking is only necessary during the last iteration of
     // the loop. We should evaluate whether adding a conditional mask helps or
@@ -1656,15 +1658,17 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
   const HloModule* hlo_module = fusion->GetModule();
   TF_ASSIGN_OR_RETURN(
       TritonWrapperResult result,
-      CompileTritonToLLVM(*hlo_module, device_info, block_level_parameters,
-                          triton_module.module.get(), llvm_module, mlir_context,
+      CompileTritonToLLVM(fn_name, *hlo_module, device_info,
+                          block_level_parameters, triton_module.module.get(),
+                          llvm_module, mlir_context,
                           /*is_xla_fusion=*/true));
   result.tma_metadata = triton_module.tma_metadata;
   return result;
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
-    const HloModule& hlo_module, const se::DeviceDescription& device_info,
+    absl::string_view kernel_name, const HloModule& hlo_module,
+    const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
     mlir::MLIRContext& mlir_context, bool is_xla_fusion, bool emit_kernel) {
@@ -1745,7 +1749,8 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   bool succeeded = mlir::succeeded(pm.run(triton_module));
 
   if (should_dump_mlir_passes) {
-    DumpToFileInDirOrStdout(hlo_module, "", "triton-passes.log",
+    DumpToFileInDirOrStdout(hlo_module, "",
+                            absl::StrCat(kernel_name, ".triton-passes.log"),
                             mlir_passes_dump_result);
   }
 
