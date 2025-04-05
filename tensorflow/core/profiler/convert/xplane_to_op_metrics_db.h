@@ -22,9 +22,9 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/profiler/convert/op_metrics_db_combiner.h"
 #include "tensorflow/core/profiler/protobuf/op_metrics.pb.h"
-#include "tensorflow/core/profiler/utils/op_utils.h"
 #include "tensorflow/core/profiler/utils/xplane_visitor.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xprof/utils/op_utils.h"  // from @org_xprof
 
 namespace tensorflow {
 namespace profiler {
@@ -47,7 +47,10 @@ void ConsumeTfMetricsDbData(TfMetricsDbData src, OpMetricsDbCombiner* dst);
 
 OpMetricsDb ConvertHostThreadsXPlaneToOpMetricsDb(const XPlane& host_trace);
 
-OpMetricsDb ConvertDeviceTraceXPlaneToOpMetricsDb(const XPlane& device_trace);
+// Converts GPU device trace to OpMetricsDb.
+// Will use HloModuleMap to source performance info for cost analysis.
+OpMetricsDb ConvertDeviceTraceXPlaneToOpMetricsDb(
+    const XPlane& device_trace, const HloModuleMap& hlo_module_map);
 
 // Convert TPU DeviceTrace XPlane to OpMetricDb
 OpMetricsDb ConvertTpuDeviceTraceXPlaneToOpMetricsDb(

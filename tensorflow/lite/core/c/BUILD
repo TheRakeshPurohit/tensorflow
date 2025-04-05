@@ -277,7 +277,7 @@ cc_test(
 )
 
 # This is a private target, its visibility is set to public only to be
-# used by "tflite_custom_c_library".
+# used by "tflite_custom_c_library" and LiteRT dependencies.
 # Do not use this target directly and don't consider it as a part of the public API.
 alias(
     name = "private_c_api_types",
@@ -552,7 +552,7 @@ tflite_cc_library_with_c_headers_test(
 )
 
 # This is a private target, its visibility is set to public only to be
-# used by "custom_c_library_with_tflite".
+# used by "custom_c_library_with_tflite" and LiteRT dependencies.
 # Do not use this target directly and don't consider it as a part of the public API.
 alias(
     name = "private_c_api_opaque_without_op_resolver",
@@ -618,6 +618,7 @@ cc_test(
         "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/delegates:delegate_test_util",
         "//tensorflow/lite/testing:util",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

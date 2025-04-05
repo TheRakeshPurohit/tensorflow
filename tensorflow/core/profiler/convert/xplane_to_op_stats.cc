@@ -45,18 +45,20 @@ limitations under the License.
 #include "tensorflow/core/profiler/protobuf/op_stats.pb.h"
 #include "tensorflow/core/profiler/protobuf/steps_db.pb.h"
 #include "tensorflow/core/profiler/protobuf/tf_function.pb.h"
-#include "tensorflow/core/profiler/utils/device_caps_utils.h"
-#include "tensorflow/core/profiler/utils/event_span.h"
-#include "tensorflow/core/profiler/utils/gpu_event_stats.h"
-#include "tensorflow/core/profiler/utils/hardware_type_utils.h"
-#include "tensorflow/core/profiler/utils/hlo_module_map.h"
 #include "tensorflow/core/profiler/utils/hlo_proto_map.h"
-#include "tensorflow/core/profiler/utils/kernel_stats_utils.h"
-#include "tensorflow/core/profiler/utils/op_utils.h"
 #include "tensorflow/core/profiler/utils/xplane_schema.h"
 #include "tensorflow/core/profiler/utils/xplane_utils.h"
 #include "tensorflow/core/profiler/utils/xplane_visitor.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xprof/utils/device_caps_utils.h"  // from @org_xprof
+#include "xprof/utils/event_span.h"  // from @org_xprof
+#include "xprof/utils/gpu_event_stats.h"  // from @org_xprof
+#include "xprof/utils/hardware_type_utils.h"  // from @org_xprof
+#include "xprof/utils/hlo_cost_analysis_wrapper.h"  // from @org_xprof
+#include "xprof/utils/hlo_module_map.h"  // from @org_xprof
+#include "xprof/utils/kernel_stats_utils.h"  // from @org_xprof
+#include "xprof/utils/op_utils.h"  // from @org_xprof
+#include "xprof/utils/xprof_gpu_cost_analysis.h"  // from @org_xprof
 
 namespace tensorflow {
 namespace profiler {
@@ -313,7 +315,14 @@ OpStats ConvertXSpaceToOpStats(const XSpace& space,
   HloModuleMap hlo_module_map;
   if (options.generate_kernel_stats_db ||
       (is_tpu && options.generate_op_metrics_db)) {
-    ProcessHloModuleMapFromXSpace(hlo_module_map, &space);
+    tensorflow::profiler::HloCostAnalysisWrapper::Factory create_cost_analysis =
+        []() { return nullptr; };
+    if (is_gpu) {
+      create_cost_analysis = []() {
+        return tensorflow::profiler::CreateXprofGpuCostAnalysis();
+      };
+    }
+    ProcessHloModuleMapFromXSpace(hlo_module_map, &space, create_cost_analysis);
   }
   for (const XPlane* device_trace : device_planes) {
     if (options.generate_op_metrics_db) {
@@ -322,7 +331,8 @@ OpStats ConvertXSpaceToOpStats(const XSpace& space,
       }
       if (!is_tpu) {
         OpMetricsDb device_op_metrics_db =
-            ConvertDeviceTraceXPlaneToOpMetricsDb(*device_trace);
+            ConvertDeviceTraceXPlaneToOpMetricsDb(*device_trace,
+                                                  hlo_module_map);
         op_metrics_db_combiner.Combine(device_op_metrics_db);
       } else {
         // TODO(b/397774568): Remove this once the SparseCore OpMetricsDb is
